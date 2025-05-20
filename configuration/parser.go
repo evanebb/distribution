@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -205,6 +206,30 @@ func (p *Parser) overwriteStruct(v reflect.Value, fullpath string, path []string
 	byUpperCase := make(map[string]int)
 	for i := 0; i < v.NumField(); i++ {
 		sf := v.Type().Field(i)
+
+		// For fields inlined in the YAML configuration file, the environment variables also need to be inlined
+		// Example struct tag for inlined field: `yaml:",inline"`
+		yamlTag := sf.Tag.Get("yaml")
+		split := strings.Split(yamlTag, ",")
+		// Skip the first entry, which is the field name
+		isInlined := slices.Contains(split[1:], "inline")
+
+		if isInlined {
+			inlined := v.Field(i)
+			switch sf.Type.Kind() {
+			case reflect.Struct:
+				// Inlined struct, check whether the env variable corresponds to a field inside this struct
+				for j := 0; j < inlined.NumField(); j++ {
+					if strings.ToUpper(inlined.Type().Field(j).Name) == path[0] {
+						return p.overwriteFields(inlined, fullpath, path, payload)
+					}
+				}
+			default:
+				// Maps could also be inlined, but since we don't need it right now it is not supported
+				panic(fmt.Sprintf("inlined non-struct field is not supported: %s", sf.Name))
+			}
+		}
+
 		upper := strings.ToUpper(sf.Name)
 		if _, present := byUpperCase[upper]; present {
 			panic(fmt.Sprintf("field name collision in configuration object: %s", sf.Name))
